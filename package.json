@@ -1,0 +1,16 @@
+﻿{
+  "name": "apex-monorepo",
+  "private": true,
+  "version": "0.1.0",
+  "description": "APEX monorepo - Story 1.1",
+  "scripts": {
+    "dev": "concurrently -n frontend,backend -c blue,green \"npm run --prefix frontend dev\" \"npm run --prefix backend dev\"",
+    "dev:frontend": "npm run --prefix frontend dev",
+    "dev:backend": "npm run --prefix backend dev",
+    "build": "concurrently -n frontend,backend -c blue,green \"npm run --prefix frontend build\" \"npm run --prefix backend build\"",
+    "start": "concurrently -n frontend,backend -c blue,green \"npm run --prefix frontend start\" \"npm run --prefix backend start\""
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1"
+  }
+}
