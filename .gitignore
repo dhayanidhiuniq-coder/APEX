@@ -31,7 +31,9 @@ dist/
 downloads/
 eggs/
 .eggs/
-lib/
+# Anchored to the repo root: a bare `lib/` would also swallow the frontend's
+# real source directory `frontend/src/lib/`.
+/lib/
 lib64/
 parts/
 sdist/
@@ -59,6 +61,9 @@ venv/
 env/
 backend/.venv/
 backend/.pytest_cache/
+
+# Local dev server logs
+*.log
 
 # OS / Editor
 .DS_Store
