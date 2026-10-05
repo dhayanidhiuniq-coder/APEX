@@ -20,11 +20,11 @@ export default async function SignInPage({ searchParams }: SignInPageProps) {
         </p>
       </div>
 
-      <AuthForm mode="signin" redirectTo={redirectTo} />
+      <AuthForm redirectTo={redirectTo} />
 
       <p className="text-sm text-neutral-600 dark:text-neutral-300">
         No account yet?{" "}
-        <Link href="/signup" className="font-medium underline underline-offset-4">
+        <Link href="/create-account" className="font-medium underline underline-offset-4">
           Create one
         </Link>
       </p>

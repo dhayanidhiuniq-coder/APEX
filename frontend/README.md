@@ -18,8 +18,11 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY=<anon-key>
 NEXT_PUBLIC_API_URL=http://localhost:8000
 ```
 
-The sign-in and sign-up pages show setup instructions if these are missing, so
-the app still builds and renders without them.
+The auth pages show setup instructions if these are missing, so the app still
+builds and renders without them.
+
+Account creation also needs the Supabase project configured to send a **6-digit
+code** rather than a link — see the root README, "Supabase setup".
 
 ## Run
 
@@ -31,12 +34,14 @@ From the repository root, `npm run dev` starts this and the backend together.
 
 ## Routes
 
-| Route        | Access  | Description                               |
-| ------------ | ------- | ----------------------------------------- |
-| `/`          | Public  | Landing page                              |
-| `/signin`    | Public  | Sign in; honours `?next=`                 |
-| `/signup`    | Public  | Create an account                         |
-| `/dashboard` | Private | Protected area; redirects to `/signin`    |
+| Route             | Access  | Description                                     |
+| ----------------- | ------- | ----------------------------------------------- |
+| `/`               | Public  | Landing page                                    |
+| `/signin`         | Public  | Sign in; honours `?next=`                       |
+| `/create-account` | Public  | Create an account (name, age, email, password)  |
+| `/verify`         | Public  | Email code entry; requires a pending registration |
+| `/signup`         | Public  | Redirects to `/create-account`                  |
+| `/dashboard`      | Private | Protected area; requires a confirmed session    |
 
 ## Authentication design
 
@@ -47,16 +52,59 @@ client-side JavaScript and the Next.js server can read the same session.
 There are two layers, and both matter:
 
 1. **`src/proxy.ts`** (Next 16's name for `middleware.ts`) refreshes the session
-   before rendering and redirects signed-out users away from `/dashboard`. This
-   is a fast first line of defence, not a guarantee: proxy logic can be bypassed
-   by requesting a route handler directly.
-2. **`src/lib/auth.ts`** is the authoritative gate. `requireUser()` runs on the
-   server during render and calls `redirect()`, so a protected page body never
-   executes for an unauthenticated request, regardless of what happened in
-   `proxy.ts`.
+   before rendering and routes callers: signed-out visitors away from
+   `/dashboard`, signed-in-but-unconfirmed users to `/verify`. This is a fast
+   first line of defence, not a guarantee: proxy logic can be bypassed by
+   requesting a route handler directly.
+2. **`src/lib/auth.ts`** is the authoritative gate. `requireVerifiedUser()` runs
+   on the server during render and calls `redirect()`, so a protected page body
+   never executes without a valid, confirmed session, regardless of what
+   happened in `proxy.ts`.
 
 `getUser()` is used rather than `getSession()` because it revalidates the token
 with the auth server instead of trusting the cookie contents.
+
+### Account creation and verification
+
+Registration and code entry are **Server Actions** (`src/lib/account-actions.ts`),
+not client-side handlers. That keeps the confirmation handshake on the server:
+the one-time code is submitted straight to Supabase and never passes through
+client state, application state or a log line.
+
+`useActionState` carries a typed result back so each validation message can be
+rendered beside its own input.
+
+Two details that are easy to get wrong and are worth knowing before editing:
+
+- **A `"use server"` module may only export async functions.** Exporting a state
+  constant from one makes it silently `undefined` at runtime; `tsc` and
+  `next build` both pass, and the page then throws on `state.errors`. The
+  initial-state constants live in `src/lib/account-state.ts` for this reason.
+- **`redirect()` must be called outside `try`/`catch` in a Server Action**, or
+  the redirect is swallowed as a failure.
+
+### Structure
+
+```
+src/
+├── app/
+│   ├── (auth)/        # signin, create-account, verify + shared layout
+│   ├── (protected)/   # dashboard + layout calling requireVerifiedUser()
+│   └── page.tsx
+├── components/        # AuthForm, CreateAccountForm, OtpForm, FormField, SignOutButton
+├── lib/
+│   ├── auth.ts            # data access layer (server-only)
+│   ├── auth-errors.ts     # allowlisted error message normalisation
+│   ├── account-actions.ts # Server Actions: signup, verify, resend
+│   ├── account-state.ts   # action state types + initial values
+│   ├── email-confirmation.ts  # what counts as a confirmed address
+│   ├── otp-session.ts     # httpOnly cookie holding the pending address
+│   ├── request-origin.ts  # origin for Supabase's emailRedirectTo
+│   ├── safe-redirect.ts   # validates the ?next= parameter
+│   ├── supabase/          # config, browser client, server client, proxy helper
+│   └── validation.ts      # shared field rules
+└── proxy.ts
+```
 
 ### Calling the backend
 
@@ -64,23 +112,6 @@ with the auth server instead of trusting the cookie contents.
 and sends the access token to the FastAPI backend as a bearer token. The token
 never reaches the browser, and the backend verifies it independently before
 returning an identity.
-
-### Structure
-
-```
-src/
-├── app/
-│   ├── (auth)/        # signin, signup + shared layout
-│   ├── (protected)/   # dashboard + layout that calls requireUser()
-│   └── page.tsx
-├── components/        # AuthForm, SignOutButton
-├── lib/
-│   ├── auth.ts        # data access layer (server-only)
-│   ├── auth-errors.ts # error message normalisation
-│   ├── safe-redirect.ts # validates the ?next= parameter
-│   └── supabase/      # config, browser client, server client, proxy helper
-└── proxy.ts
-```
 
 ### Redirect safety
 

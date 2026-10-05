@@ -1,47 +1,37 @@
 "use client";
 
 /**
- * Shared email/password form used by both the sign-in and sign-up pages.
+ * Email and password sign-in form.
  *
  * Talks to Supabase Auth directly. The resulting session is written to cookies
  * by `@supabase/ssr`, so the token is never placed in application state.
+ *
+ * Registration deliberately lives in its own form (`CreateAccountForm`): it needs
+ * five fields plus an email confirmation step, and it runs as a Server Action so
+ * the confirmation code never passes through the browser. This component stays
+ * the simple sign-in path it has always been.
  */
 
 import { useState, useTransition, type FormEvent } from "react";
 
 import { NETWORK_FAILURE_MESSAGE, toDisplayableAuthError } from "@/lib/auth-errors";
 import { createClient } from "@/lib/supabase/client";
-
-type AuthMode = "signin" | "signup";
+import { MIN_PASSWORD_LENGTH } from "@/lib/validation";
 
 type AuthFormProps = {
-  mode: AuthMode;
   /** Path to navigate to once authenticated. */
   redirectTo: string;
 };
 
-type FormState = {
-  error: string | null;
-  notice: string | null;
-};
-
-const COPY: Record<AuthMode, { title: string; submit: string; pending: string }> = {
-  signin: { title: "Sign in", submit: "Sign in", pending: "Signing in…" },
-  signup: { title: "Create your account", submit: "Sign up", pending: "Creating account…" },
-};
-
-
-export function AuthForm({ mode, redirectTo }: AuthFormProps) {
+export function AuthForm({ redirectTo }: AuthFormProps) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [formState, setFormState] = useState<FormState>({ error: null, notice: null });
+  const [error, setError] = useState<string | null>(null);
   // Covers the network round trip to Supabase Auth...
   const [isSubmitting, setIsSubmitting] = useState(false);
   // ...and the navigation that follows a successful sign-in.
   const [isNavigating, startTransition] = useTransition();
 
-  const isSignUp = mode === "signup";
-  const copy = COPY[mode];
   const isBusy = isSubmitting || isNavigating;
   const isDisabled = isBusy || email.trim() === "" || password === "";
 
@@ -52,51 +42,41 @@ export function AuthForm({ mode, redirectTo }: AuthFormProps) {
       return;
     }
 
-    setFormState({ error: null, notice: null });
+    setError(null);
     setIsSubmitting(true);
 
-    let succeeded = false;
-    let notice: string | null = null;
     let failure: string | null = null;
+    let succeeded = false;
 
     try {
       const supabase = createClient();
 
-      const result = isSignUp
-        ? await supabase.auth.signUp({
-            email: email.trim(),
-            password,
-            // Send the new user straight back into the app once confirmed.
-            options: { emailRedirectTo: `${window.location.origin}${redirectTo}` },
-          })
-        : await supabase.auth.signInWithPassword({ email: email.trim(), password });
+      const result = await supabase.auth.signInWithPassword({
+        email: email.trim(),
+        password,
+      });
 
       if (result.error) {
         failure = toDisplayableAuthError(result.error.message);
-      } else if (isSignUp && !result.data.session) {
-        notice = "Account created. Check your inbox to confirm the address, then sign in.";
       } else {
         succeeded = true;
       }
     } catch {
-      // `signIn`/`signUp` resolve with an error object for auth problems, but a
-      // transport failure can reject. Never leave the form stuck submitting.
+      // `signInWithPassword` resolves with an error object for auth problems, but
+      // a transport failure can reject. Never leave the form stuck submitting.
       failure = NETWORK_FAILURE_MESSAGE;
     }
 
     setIsSubmitting(false);
 
     if (failure !== null) {
-      setFormState({ error: failure, notice: null });
-      return;
-    }
-
-    if (notice !== null) {
-      setFormState({ error: null, notice });
+      setError(failure);
       return;
     }
 
     if (succeeded) {
+      // A full navigation guarantees no server component keeps rendering the
+      // signed-out view out of a cached router state.
       startTransition(() => {
         window.location.assign(redirectTo);
       });
@@ -119,8 +99,9 @@ export function AuthForm({ mode, redirectTo }: AuthFormProps) {
           onChange={(event) => setEmail(event.target.value)}
           placeholder="you@example.com"
           disabled={isBusy}
-          aria-describedby={formState.error ? "auth-error" : undefined}
-          className="rounded-md border border-neutral-300 bg-transparent px-3 py-2 text-sm outline-none focus:border-neutral-600 disabled:opacity-60 dark:border-neutral-700"
+          aria-invalid={error ? true : undefined}
+          aria-describedby={error ? "auth-error" : undefined}
+          className="rounded-md border border-neutral-300 bg-transparent px-3 py-2 text-sm outline-none focus:border-neutral-600 disabled:opacity-60 aria-invalid:border-red-500 aria-invalid:focus:border-red-600 dark:border-neutral-700 dark:aria-invalid:border-red-500 dark:aria-invalid:focus:border-red-600"
         />
       </div>
 
@@ -132,26 +113,21 @@ export function AuthForm({ mode, redirectTo }: AuthFormProps) {
           id="password"
           name="password"
           type="password"
-          autoComplete={isSignUp ? "new-password" : "current-password"}
+          autoComplete="current-password"
           required
-          minLength={8}
+          minLength={MIN_PASSWORD_LENGTH}
           value={password}
           onChange={(event) => setPassword(event.target.value)}
-          placeholder="At least 8 characters"
+          placeholder={`At least ${MIN_PASSWORD_LENGTH} characters`}
           disabled={isBusy}
+          aria-describedby={error ? "auth-error" : undefined}
           className="rounded-md border border-neutral-300 bg-transparent px-3 py-2 text-sm outline-none focus:border-neutral-600 disabled:opacity-60 dark:border-neutral-700"
         />
       </div>
 
-      {formState.error ? (
+      {error ? (
         <p id="auth-error" role="alert" className="text-sm text-red-600 dark:text-red-400">
-          {formState.error}
-        </p>
-      ) : null}
-
-      {formState.notice ? (
-        <p role="status" className="text-sm text-neutral-600 dark:text-neutral-300">
-          {formState.notice}
+          {error}
         </p>
       ) : null}
 
@@ -160,11 +136,11 @@ export function AuthForm({ mode, redirectTo }: AuthFormProps) {
         disabled={isDisabled}
         className="rounded-md border border-black bg-black px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-neutral-700 disabled:cursor-not-allowed disabled:opacity-50 dark:border-white dark:bg-white dark:text-black dark:hover:bg-neutral-200"
       >
-        {isBusy ? copy.pending : copy.submit}
+        {isBusy ? "Signing in…" : "Sign in"}
       </button>
 
       <p className="sr-only" aria-live="polite">
-        {copy.title} form status: {isBusy ? "submitting" : "idle"}
+        Sign in form status: {isBusy ? "submitting" : "idle"}
       </p>
     </form>
   );

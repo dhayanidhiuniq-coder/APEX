@@ -1,18 +1,19 @@
 import Link from "next/link";
 
 import { SignOutButton } from "@/components/sign-out-button";
-import { requireUser } from "@/lib/auth";
+import { requireVerifiedUser } from "@/lib/auth";
 
 /**
  * Layout for every signed-in page.
  *
- * `requireUser()` runs on the server during render and redirects to
- * `/signin` when there is no valid session. This is the authoritative gate:
+ * `requireVerifiedUser()` runs on the server during render and redirects to
+ * `/signin` when there is no valid session, or to `/verify` when the session's
+ * email address has not been confirmed. This is the authoritative gate:
  * bypassing `proxy.ts` still lands on a redirect, because the page body never
  * executes.
  */
 export default async function ProtectedLayout({ children }: { children: React.ReactNode }) {
-  const user = await requireUser("/dashboard");
+  const user = await requireVerifiedUser("/dashboard");
 
   return (
     <div className="flex min-h-full flex-1 flex-col">

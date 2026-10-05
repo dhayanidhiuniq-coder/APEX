@@ -12,7 +12,15 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
+import { isEmailConfirmed } from "@/lib/email-confirmation";
+
 import { isSupabaseConfigured, getSupabasePublicConfig } from "./config";
+
+/** Minimal caller state, enough to route on without a second lookup. */
+export type ProxyUser = {
+  id: string;
+  emailVerified: boolean;
+};
 
 /**
  * Refresh the Supabase session cookies on an incoming request.
@@ -20,14 +28,18 @@ import { isSupabaseConfigured, getSupabasePublicConfig } from "./config";
  * Returns a response whose cookies have been updated with the (possibly
  * refreshed) session. Callers that want to redirect should do so on the
  * returned response so the new cookies are preserved.
+ *
+ * The returned user comes from `getUser()`, which revalidates against Supabase
+ * Auth, so `emailVerified` is the server's answer and not a cookie value the
+ * browser could have edited.
  */
 export async function refreshSession(
   request: NextRequest,
-): Promise<{ response: NextResponse; userId: string | null }> {
+): Promise<{ response: NextResponse; user: ProxyUser | null }> {
   // Without configuration there is no session to refresh. Pass the request
   // through untouched rather than crashing the whole app.
   if (!isSupabaseConfigured()) {
-    return { response: NextResponse.next({ request }), userId: null };
+    return { response: NextResponse.next({ request }), user: null };
   }
 
   let response = NextResponse.next({ request });
@@ -60,5 +72,15 @@ export async function refreshSession(
     data: { user },
   } = await supabase.auth.getUser();
 
-  return { response, userId: user?.id ?? null };
+  if (!user) {
+    return { response, user: null };
+  }
+
+  return {
+    response,
+    user: {
+      id: user.id,
+      emailVerified: isEmailConfirmed(user.email_confirmed_at, user.confirmed_at),
+    },
+  };
 }

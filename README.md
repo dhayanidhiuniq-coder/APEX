@@ -2,8 +2,9 @@
 
 Private, per-user AI workspace.
 
-**Status:** Story 1.1 (monorepo) and Story 1.2 (identity & authentication) are
-complete. Projects and tasks are not implemented yet.
+**Status:** Story 1.1 (monorepo) and Story 1.2 (identity & authentication,
+including account creation and email verification) are complete. Projects and
+tasks are not implemented yet.
 
 ## Stack
 
@@ -66,20 +67,75 @@ entirely by Supabase; APEX never stores credentials.
 
 ### How it works
 
-1. The user signs up or signs in on `/signup` or `/signin`. The browser calls
-   Supabase Auth through `@supabase/supabase-js`.
-2. `@supabase/ssr` stores the session in **cookies**, not `localStorage`. The
+1. The user creates an account on `/create-account` or signs in on `/signin`.
+2. Registration is a Server Action (`src/lib/account-actions.ts`). It validates
+   name, age, email, password and confirmation, then hands the credentials to
+   Supabase Auth. Name and age are **profile data**, sent as Supabase user
+   metadata; the password goes to Supabase and is never stored by APEX.
+3. Because "Confirm email" is on, Supabase returns no session. The user is sent
+   to `/verify` and Supabase emails a 6-digit code.
+4. `/verify` submits the code back to Supabase. **Verifying the code is what
+   signs the user in** — Supabase returns a session with the verification
+   response, and the user lands on `/dashboard`.
+5. `@supabase/ssr` stores the session in **cookies**, not `localStorage`. The
    access token is therefore never placed in application state or exposed to
    arbitrary client-side JavaScript.
-3. `src/proxy.ts` refreshes the session before each render and redirects
-   signed-out users away from `/dashboard`.
-4. `src/lib/auth.ts` performs the **authoritative** check on the server during
-   render. `proxy.ts` alone is not trusted: the protected page body never
-   executes without a valid session.
-5. For backend calls, the Next.js server reads the session and sends the
+6. `src/proxy.ts` refreshes the session before each render and routes callers:
+   signed-out to `/signin`, signed-in-but-unconfirmed to `/verify`.
+7. `src/lib/auth.ts` performs the **authoritative** check on the server during
+   render via `requireVerifiedUser()`. `proxy.ts` alone is not trusted: the
+   protected page body never executes without a valid, confirmed session.
+8. For backend calls, the Next.js server reads the session and sends the
    access token as a bearer token. The FastAPI backend **verifies the token
    itself** and derives the user identity from the verified claims. The user id
    is never accepted from a request parameter, query string or body.
+
+### Account creation and email verification
+
+| Field              | Rule                                                  |
+| ------------------ | ----------------------------------------------------- |
+| Name               | Required, non-blank, ≤ 120 characters                 |
+| Age                | Required, whole number, 0–120                         |
+| Email              | Required, valid format                                |
+| Password           | Required, at least 8 characters                       |
+| Confirm password   | Required, must match exactly                          |
+
+Validation runs on the server before any network call, so an invalid submission
+never reaches Supabase. Errors are returned per field and rendered beside the
+input, wired up with `aria-invalid` and `aria-describedby`.
+
+Security properties worth stating explicitly:
+
+- **No password is persisted by APEX**, and none is returned to the browser. The
+  Create Account action deliberately does not echo field values back through its
+  state, so a rejected submission cannot round-trip a password into the DOM.
+- **The one-time code never enters client state.** It goes straight from the
+  form to a Server Action to Supabase. It is never logged, never stored, and
+  never interpolated into an error message.
+- **The address awaiting confirmation lives in an httpOnly cookie**, not in
+  `?email=`, so it stays out of browser history and request logs.
+- **Upstream error text is never passed through unrecognised.** Sign-up and OTP
+  failures are matched against an allowlist of known cases; anything unknown
+  falls back to a generic message. No stack traces reach the user.
+- Supabase answers a mistyped code and an expired one identically, so APEX does
+  not claim to distinguish them — one message covers both and points at Resend.
+
+The service-role key is not needed anywhere in this flow, and is never used by
+the frontend.
+
+### Where name and age are stored
+
+The Create Account form sends name and age to Supabase as **user metadata**
+(`options.data`). That is enough for everything in this story: it travels with
+the user record, needs no database table, and needs no service-role key.
+
+`supabase/migrations/0001_create_profiles.sql` additionally defines a
+`public.profiles` table (`user_id`, `name`, `age`, `created_at`, `updated_at`)
+keyed on the Supabase Auth user id, with RLS and a trigger that copies the
+metadata into it on sign-up. **APEX does not read or write that table yet.**
+It exists so the profile has a first-class, queryable home before Story 1.3
+needs one, and so RLS is settled while the table has a single shape. The app
+runs correctly whether or not you apply it.
 
 Only public values (`NEXT_PUBLIC_*`) are exposed to the browser. The Supabase
 service-role key and JWT secret are server-only and must never be placed in a
@@ -87,12 +143,22 @@ service-role key and JWT secret are server-only and must never be placed in a
 
 ### Frontend routes
 
-| Route       | Access  | Description                        |
-| ----------- | ------- | ---------------------------------- |
-| `/`         | Public  | Landing page                       |
-| `/signin`   | Public  | Sign in (honours `?next=`)         |
-| `/signup`   | Public  | Create an account                  |
-| `/dashboard`| Private | Protected area; redirects to `/signin` |
+| Route             | Access  | Description                                     |
+| ----------------- | ------- | ----------------------------------------------- |
+| `/`               | Public  | Landing page                                    |
+| `/signin`         | Public  | Sign in (honours `?next=`)                      |
+| `/create-account` | Public  | Create an account (name, age, email, password)  |
+| `/verify`         | Public  | Email code entry; needs a pending registration  |
+| `/signup`         | Public  | Redirects to `/create-account`                 |
+| `/dashboard`      | Private | Protected area; requires a confirmed session   |
+
+Protected-area routing:
+
+| Caller                    | Result                     |
+| ------------------------- | -------------------------- |
+| Not authenticated         | `/signin`                  |
+| Authenticated, unconfirmed| `/verify`                  |
+| Authenticated, confirmed  | Allowed                    |
 
 ### Backend routes
 
@@ -138,16 +204,32 @@ Create a project at <https://supabase.com>, then:
    SUPABASE_ANON_KEY=<anon-key>
    ```
 
-2. **Authentication → Sign In / Providers → Email.** By default new accounts
-   require email confirmation. For local testing you can disable "Confirm
-   email"; the sign-up page then signs the user in immediately.
+2. **Authentication → Sign In / Providers → Email.** Leave **"Confirm email"
+   enabled**. This is what makes `/verify` reachable and stops an unconfirmed
+   address obtaining a session by signing in directly.
 
-3. No database tables are needed for this story. The `profiles` table, Projects
-   and Tasks belong to Story 1.3.
+3. **Authentication → Emails → Templates → Confirm signup.** Switch the template
+   to the **"Email OTP"** variant. This is required: the default template sends a
+   confirmation *link*, but APEX asks the user to type a 6-digit code. Without
+   this change no code is ever sent and nobody can complete registration.
 
-4. Restart the dev servers after editing env files. `NEXT_PUBLIC_*` values are
+4. **Authentication → URL Configuration.** Add your local and deployed origins to
+   the redirect allowlist so `emailRedirectTo` is honoured for the link flow.
+
+5. Restart the dev servers after editing env files. `NEXT_PUBLIC_*` values are
    inlined at build time, so delete `frontend/.next` if a change appears not to
    take effect.
+
+### Applying the profiles migration (optional)
+
+```bash
+# via the SQL editor
+supabase/migrations/0001_create_profiles.sql
+```
+
+Nothing in Story 1.2 depends on it — see
+[Where name and age are stored](#where-name-and-age-are-stored). Projects and
+Tasks tables belong to Story 1.3.
 
 Never commit `.env`, `.env.local`, the service-role key, or the JWT secret.
 Only `.env.example` is tracked.
@@ -159,10 +241,10 @@ APEX/
 ├── frontend/          # Next.js app
 │   └── src/
 │       ├── app/
-│       │   ├── (auth)/       # /signin, /signup
+│       │   ├── (auth)/       # /signin, /create-account, /verify
 │       │   └── (protected)/  # /dashboard
-│       ├── components/       # AuthForm, SignOutButton
-│       ├── lib/              # data access layer + Supabase clients
+│       ├── components/       # AuthForm, CreateAccountForm, OtpForm, SignOutButton
+│       ├── lib/              # data access layer, Server Actions, Supabase clients
 │       └── proxy.ts          # session refresh (Next 16 name for middleware)
 ├── backend/           # FastAPI app
 │   ├── src/apex_backend/
@@ -171,6 +253,8 @@ APEX/
 │   │   ├── core/      # settings
 │   │   └── models/    # Pydantic schemas
 │   └── tests/
+├── supabase/
+│   └── migrations/    # optional SQL, not yet read by the app
 ├── .env.example
 └── package.json       # root dev orchestration
 ```
@@ -198,4 +282,13 @@ client-supplied `user_id` cannot influence the result).
 - `@supabase/ssr` splits large cookies into chunks; a local Supabase session
   produces around ten cookies. This is expected.
 - The auth UI is functional, not final. Visual design arrives later.
-- Row Level Security policies require database tables and are Story 1.3.
+- Rate limiting and CAPTCHA on signup/verification are Supabase dashboard
+  settings, not application code. Turn them on for any public deployment.
+- A 6-digit code has limited entropy, so the "Confirm email" setting alone is
+  the real control; APEX does not add a second factor.
+- A "signed in but unconfirmed" session cannot arise with "Confirm email" on,
+  because Supabase refuses to issue one. That routing still exists and is
+  defensive; it was tested by hand using a stand-in that hands out such a
+  session on request.
+- The `profiles` table is defined but unused by the app. Projects and Tasks
+  tables are Story 1.3.

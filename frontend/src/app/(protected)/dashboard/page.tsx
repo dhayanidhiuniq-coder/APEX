@@ -1,4 +1,4 @@
-import { fetchBackendIdentity, requireUser } from "@/lib/auth";
+import { fetchBackendIdentity, requireVerifiedUser } from "@/lib/auth";
 
 /**
  * Protected application area.
@@ -13,7 +13,7 @@ import { fetchBackendIdentity, requireUser } from "@/lib/auth";
  * trusts, which is the contract Stories 1.3+ will build on.
  */
 export default async function DashboardPage() {
-  const user = await requireUser("/dashboard");
+  const user = await requireVerifiedUser("/dashboard");
   const backendIdentity = await fetchBackendIdentity();
 
   return (
@@ -21,17 +21,41 @@ export default async function DashboardPage() {
       <div className="flex flex-col gap-1.5">
         <h1 className="text-2xl font-semibold tracking-tight">Dashboard</h1>
         <p className="text-sm text-neutral-600 dark:text-neutral-300">
-          You are signed in. This area is only reachable with a valid session.
+          You are signed in and your email is confirmed. This area is only reachable
+          with a valid session.
         </p>
       </div>
 
-      <section className="grid gap-4 sm:grid-cols-2">
+      <section className="grid gap-4 lg:grid-cols-3">
         <article className="flex flex-col gap-2 rounded-lg border border-neutral-200 p-5 dark:border-neutral-800">
           <h2 className="text-sm font-medium text-neutral-500 dark:text-neutral-400">
             Identity from Supabase session
           </h2>
           <p className="font-mono text-sm break-all">id: {user.id}</p>
           <p className="text-sm break-all">email: {user.email ?? "—"}</p>
+          <p className="text-xs text-neutral-500 dark:text-neutral-400">
+            email confirmed: {user.emailVerified ? "yes" : "no"}
+          </p>
+        </article>
+
+        <article className="flex flex-col gap-2 rounded-lg border border-neutral-200 p-5 dark:border-neutral-800">
+          <h2 className="text-sm font-medium text-neutral-500 dark:text-neutral-400">
+            Profile
+          </h2>
+          {user.profile ? (
+            <>
+              <p className="text-sm break-all">name: {user.profile.name}</p>
+              <p className="text-sm">age: {user.profile.age}</p>
+              <p className="text-xs text-neutral-500 dark:text-neutral-400">
+                Supplied on the Create Account form. Held by Supabase Auth, not by APEX.
+              </p>
+            </>
+          ) : (
+            <p className="text-sm text-neutral-600 dark:text-neutral-300">
+              No name and age on this account. Accounts created before the Create
+              Account flow have no profile data.
+            </p>
+          )}
         </article>
 
         <article className="flex flex-col gap-2 rounded-lg border border-neutral-200 p-5 dark:border-neutral-800">

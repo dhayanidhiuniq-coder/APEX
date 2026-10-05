@@ -3,30 +3,41 @@ import { NextResponse, type NextRequest } from "next/server";
 import { refreshSession } from "@/lib/supabase/proxy";
 
 /**
- * Refresh the Supabase session ahead of rendering and bounce signed-out users
- * away from protected routes.
+ * Refresh the Supabase session ahead of rendering and route callers to where
+ * they belong: signed-out visitors to `/signin`, signed-in users whose email is
+ * unconfirmed to `/verify`, and confirmed users out of the auth pages.
  *
- * This is a fast first line of defence only. The authoritative check is the
- * data access layer in `@/lib/auth`, which every protected page calls during
- * render. Proxy logic can be bypassed by hitting a route handler directly, so
- * it must never be the sole gate on protected data.
+ * This is a fast first line of defence only. The authoritative check is the data
+ * access layer in `@/lib/auth`, where `requireVerifiedUser()` runs during render
+ * inside the protected layout. Proxy logic can be bypassed by hitting a route
+ * handler directly, so it must never be the sole gate on protected data.
  */
 
-/** Routes that require a signed-in user. */
+/** Routes that require a signed-in, confirmed user. */
 const PROTECTED_PREFIXES = ["/dashboard"];
 
-/** Auth pages that a signed-in user has no reason to see. */
-const AUTH_ROUTES = ["/signin", "/signup"];
+/** Auth pages a fully signed-in user has no reason to see. */
+const AUTH_ROUTES = ["/signin", "/signup", "/create-account"];
+
+/** Where an unconfirmed session is sent to finish confirming. */
+const VERIFY_ROUTE = "/verify";
+
+function matches(pathname: string, routes: string[]): boolean {
+  return routes.some((route) => pathname === route || pathname.startsWith(`${route}/`));
+}
 
 export async function proxy(request: NextRequest) {
-  const { response, userId } = await refreshSession(request);
+  const { response, user } = await refreshSession(request);
   const { pathname } = request.nextUrl;
 
-  const needsAuth = PROTECTED_PREFIXES.some(
-    (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`),
-  );
+  const isProtected = matches(pathname, PROTECTED_PREFIXES);
+  const isVerifyRoute = pathname === VERIFY_ROUTE || pathname.startsWith(`${VERIFY_ROUTE}/`);
+  const isAuthRoute = matches(pathname, AUTH_ROUTES);
 
-  if (needsAuth && !userId) {
+  // Nobody signed in: protected routes go to sign-in. `/verify` is not
+  // protected here — it checks its own pending-registration cookie during
+  // render and redirects onward, which keeps that decision server-side.
+  if (isProtected && !user) {
     const signInUrl = request.nextUrl.clone();
     signInUrl.pathname = "/signin";
     signInUrl.search = "";
@@ -37,15 +48,32 @@ export async function proxy(request: NextRequest) {
     return NextResponse.redirect(signInUrl);
   }
 
-  const isAuthRoute = AUTH_ROUTES.some(
-    (route) => pathname === route || pathname.startsWith(`${route}/`),
-  );
+  // Signed in but the address is unconfirmed: they have no business in the
+  // protected area yet. This is the fast path; `requireVerifiedUser()` in the
+  // protected layout is the one that actually holds.
+  if (isProtected && user && !user.emailVerified) {
+    const verifyUrl = request.nextUrl.clone();
+    verifyUrl.pathname = VERIFY_ROUTE;
+    verifyUrl.search = "";
+    return NextResponse.redirect(verifyUrl);
+  }
 
-  if (isAuthRoute && userId) {
+  // A confirmed user has nothing to do on the auth pages, including the code
+  // entry screen.
+  if ((isAuthRoute || isVerifyRoute) && user?.emailVerified) {
     const dashboardUrl = request.nextUrl.clone();
     dashboardUrl.pathname = "/dashboard";
     dashboardUrl.search = "";
     return NextResponse.redirect(dashboardUrl);
+  }
+
+  // An unconfirmed user has no useful session to offer on the sign-in page, and
+  // signing in again will not confirm anything. Send them to the code screen.
+  if (isAuthRoute && user && !user.emailVerified) {
+    const verifyUrl = request.nextUrl.clone();
+    verifyUrl.pathname = VERIFY_ROUTE;
+    verifyUrl.search = "";
+    return NextResponse.redirect(verifyUrl);
   }
 
   return response;
