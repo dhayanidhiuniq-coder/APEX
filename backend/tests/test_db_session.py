@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import threading
-import time
 from collections.abc import AsyncIterator
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
@@ -18,12 +16,15 @@ from apex_backend.core.config import get_settings
 from apex_backend.db import session as db_session
 from apex_backend.db.config import DatabaseConfigurationError
 from apex_backend.db.session import (
+    DatabaseLifecycleError,
+    DatabaseLoopMismatchError,
     DatabaseNotConfiguredError,
+    DatabaseShuttingDownError,
+    DatabaseWorkNotRegisteredError,
     dispose_engine,
     get_db_session,
     get_engine,
     get_session_factory,
-    reset_database_shutdown_state,
 )
 
 DUMMY_USER = "phase1b-user"
@@ -40,13 +41,25 @@ def _configure(monkeypatch: pytest.MonkeyPatch, url: str) -> None:
     get_settings.cache_clear()
 
 
+async def _reset_state() -> None:
+    await db_session._reset_database_for_testing()
+
+
+async def _tracked_get_engine() -> Any:
+    async with db_session._register_db_work():
+        return await get_engine()
+
+
+async def _tracked_get_factory() -> Any:
+    async with db_session._register_db_work():
+        return await get_session_factory()
+
+
 @pytest.fixture(autouse=True)
 async def _clean_engine_state() -> AsyncIterator[None]:
-    reset_database_shutdown_state()
-    await dispose_engine()
+    await _reset_state()
     yield
-    await dispose_engine()
-    reset_database_shutdown_state()
+    await _reset_state()
 
 
 class FakeAsyncSession:
@@ -89,8 +102,9 @@ async def test_get_engine_fails_before_creation_when_unconfigured(
 
     monkeypatch.setattr(db_session, "create_async_engine", _unexpected_create)
 
-    with pytest.raises(DatabaseNotConfiguredError):
-        await get_engine()
+    async with db_session._register_db_work():
+        with pytest.raises(DatabaseNotConfiguredError):
+            await get_engine()
 
     assert db_session._engine is None
     assert db_session._session_factory is None
@@ -112,10 +126,11 @@ async def test_engine_and_factory_are_lazy_singletons(
     assert db_session._engine is None
     assert db_session._session_factory is None
 
-    first_engine = await get_engine()
-    second_engine = await get_engine()
-    first_factory = await get_session_factory()
-    second_factory = await get_session_factory()
+    async with db_session._register_db_work():
+        first_engine = await get_engine()
+        second_engine = await get_engine()
+        first_factory = await get_session_factory()
+        second_factory = await get_session_factory()
 
     assert first_engine is second_engine
     assert first_factory is second_factory
@@ -128,7 +143,8 @@ async def test_engine_uses_async_postgresql_dialect_and_pool_settings(
 ) -> None:
     _configure(monkeypatch, VALID_URL)
 
-    engine = await get_engine()
+    async with db_session._register_db_work():
+        engine = await get_engine()
 
     assert engine.url.drivername == "postgresql+psycopg"
     assert engine.dialect.name == "postgresql"
@@ -146,8 +162,9 @@ async def test_session_factory_configuration(
 ) -> None:
     _configure(monkeypatch, VALID_URL)
 
-    engine = await get_engine()
-    factory = await get_session_factory()
+    async with db_session._register_db_work():
+        engine = await get_engine()
+        factory = await get_session_factory()
 
     assert factory.class_ is AsyncSession
     assert factory.kw["bind"] is engine
@@ -160,48 +177,86 @@ async def test_concurrent_lazy_initialization_is_safe(
 ) -> None:
     _configure(monkeypatch, VALID_URL)
 
-    engines = await asyncio.gather(*(get_engine() for _ in range(20)))
-    factories = await asyncio.gather(*(get_session_factory() for _ in range(20)))
+    engines = await asyncio.gather(*(_tracked_get_engine() for _ in range(20)))
+    factories = await asyncio.gather(*(_tracked_get_factory() for _ in range(20)))
 
     assert all(engine is engines[0] for engine in engines)
     assert all(factory is factories[0] for factory in factories)
 
 
-async def test_threaded_lazy_initialization_creates_one_engine(
+async def test_cross_loop_calls_are_rejected(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _configure(monkeypatch, VALID_URL)
 
-    class FakeEngine:
-        async def dispose(self) -> None:
-            pass
-
-    fake_engine = FakeEngine()
-    factory_calls = 0
-    factory_lock = threading.Lock()
-
-    def _create_engine(*_: Any, **__: Any) -> Any:
-        nonlocal factory_calls
-        with factory_lock:
-            factory_calls += 1
-        time.sleep(0.05)
-        return fake_engine
-
-    monkeypatch.setattr(db_session, "create_async_engine", _create_engine)
-
-    worker_count = 12
-    barrier = threading.Barrier(worker_count)
-
     def _worker() -> Any:
-        barrier.wait(timeout=5)
-        return asyncio.run(get_engine())
+        async def _use() -> Any:
+            async with db_session._register_db_work():
+                return await get_engine()
 
-    with ThreadPoolExecutor(max_workers=worker_count) as executor:
-        engines = list(executor.map(lambda _: _worker(), range(worker_count)))
+        return asyncio.run(_use())
 
-    assert factory_calls == 1
-    assert all(engine is fake_engine for engine in engines)
-    assert db_session._engine is fake_engine
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        with pytest.raises(DatabaseLoopMismatchError):
+            executor.submit(_worker).result()
+
+    assert db_session._engine is None
+
+
+async def test_direct_helpers_cannot_bypass_tracker() -> None:
+    with pytest.raises(DatabaseWorkNotRegisteredError):
+        await get_engine()
+    with pytest.raises(DatabaseWorkNotRegisteredError):
+        await get_session_factory()
+    with pytest.raises(DatabaseLifecycleError):
+        await dispose_engine()
+
+
+async def test_child_task_cannot_reuse_parent_registration() -> None:
+    started = asyncio.Event()
+    errors: list[BaseException] = []
+
+    async def _child() -> None:
+        await started.wait()
+        try:
+            await get_engine()
+        except BaseException as exc:
+            errors.append(exc)
+
+    async with db_session._register_db_work():
+        child = asyncio.create_task(_child())
+        started.set()
+        db_session.begin_database_shutdown()
+        await child
+        assert db_session.active_database_work_count() == 1
+
+    assert len(errors) == 1
+    assert isinstance(errors[0], DatabaseWorkNotRegisteredError)
+    assert db_session.active_database_work_count() == 0
+    db_session.mark_database_shutdown_complete()
+
+
+async def test_registration_after_shutdown_is_rejected() -> None:
+    db_session.begin_database_shutdown()
+    with pytest.raises(DatabaseShuttingDownError):
+        async with db_session._register_db_work():
+            pass
+    db_session.mark_database_shutdown_complete()
+
+
+async def test_dispose_engine_rejected_with_active_work() -> None:
+    async with db_session._register_db_work():
+        permit = db_session.begin_database_shutdown()
+        with pytest.raises(DatabaseLifecycleError):
+            await dispose_engine(_permit=permit)
+    db_session.mark_database_shutdown_complete()
+
+
+async def test_fresh_lifespan_cannot_reopen_gate_during_drain() -> None:
+    db_session.begin_database_shutdown()
+    with pytest.raises(DatabaseLifecycleError):
+        db_session.reset_database_shutdown_state()
+    db_session.mark_database_shutdown_complete()
 
 
 async def test_dispose_engine_clears_state(
@@ -220,10 +275,12 @@ async def test_dispose_engine_clears_state(
     monkeypatch.setattr(
         db_session, "create_async_engine", lambda *_, **__: fake_engine
     )
-    engine = await get_engine()
-    factory = await get_session_factory()
+    async with db_session._register_db_work():
+        engine = await get_engine()
+        factory = await get_session_factory()
 
-    await dispose_engine()
+    permit = db_session.begin_database_shutdown()
+    await dispose_engine(_permit=permit)
 
     assert engine is fake_engine
     assert factory.kw["bind"] is engine
@@ -231,7 +288,8 @@ async def test_dispose_engine_clears_state(
     assert db_session._engine is None
     assert db_session._session_factory is None
 
-    await dispose_engine()
+    with pytest.raises(DatabaseLifecycleError):
+        await dispose_engine(_permit=permit)
     assert fake_engine.dispose_calls == 1
 
 
@@ -248,27 +306,50 @@ async def test_dispose_engine_clears_state_when_disposal_raises(
     monkeypatch.setattr(
         db_session, "create_async_engine", lambda *_, **__: fake_engine
     )
-    engine = await get_engine()
-    factory = await get_session_factory()
+    async with db_session._register_db_work():
+        engine = await get_engine()
+        factory = await get_session_factory()
 
+    permit = db_session.begin_database_shutdown()
     with pytest.raises(RuntimeError, match="disposal failed"):
-        await dispose_engine()
+        await dispose_engine(_permit=permit)
 
     assert engine is fake_engine
     assert factory.kw["bind"] is engine
     assert db_session._engine is None
     assert db_session._session_factory is None
 
+    with pytest.raises(DatabaseLifecycleError):
+        await dispose_engine(_permit=permit)
+
+
+async def test_permit_from_previous_lifespan_is_rejected_after_reset() -> None:
+    permit = db_session.begin_database_shutdown()
+    db_session.mark_database_shutdown_complete()
+    db_session.reset_database_shutdown_state()
+
+    assert db_session._lifecycle_phase == db_session._PHASE_OPEN
+    with pytest.raises(DatabaseLifecycleError):
+        await dispose_engine(_permit=permit)
+
+    new_permit = db_session.begin_database_shutdown()
+    assert new_permit is not permit
+    db_session.mark_database_shutdown_complete()
+
 
 async def test_real_engine_is_disposed_and_replaced(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _configure(monkeypatch, VALID_URL)
-    engine = await get_engine()
+    async with db_session._register_db_work():
+        engine = await get_engine()
 
-    await dispose_engine()
+    permit = db_session.begin_database_shutdown()
+    await dispose_engine(_permit=permit)
+    db_session.reset_database_shutdown_state()
 
-    replacement = await get_engine()
+    async with db_session._register_db_work():
+        replacement = await get_engine()
 
     assert replacement is not engine
     assert db_session._engine is replacement
@@ -284,8 +365,9 @@ async def test_engine_creation_failure_is_sanitized(
 
     monkeypatch.setattr(db_session, "create_async_engine", _fail)
 
-    with pytest.raises(DatabaseConfigurationError) as error:
-        await get_engine()
+    async with db_session._register_db_work():
+        with pytest.raises(DatabaseConfigurationError) as error:
+            await get_engine()
 
     message = str(error.value)
     for sensitive in SENSITIVE_PARTS:
