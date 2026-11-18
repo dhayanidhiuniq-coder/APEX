@@ -52,7 +52,7 @@ export function FormField({
         name={name}
         aria-invalid={error ? true : undefined}
         aria-describedby={describedBy}
-        className="rounded-md border border-neutral-300 bg-transparent px-3 py-2 text-sm outline-none focus:border-neutral-600 disabled:opacity-60 aria-invalid:border-red-500 aria-invalid:focus:border-red-600 dark:border-neutral-700 dark:aria-invalid:border-red-500 dark:aria-invalid:focus:border-red-600"
+        className="rounded-md border border-neutral-300 bg-transparent px-3 py-2 text-sm outline-none transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neutral-500 disabled:opacity-60 aria-invalid:border-red-500 aria-invalid:focus-visible:ring-red-500 dark:border-neutral-700 dark:focus-visible:ring-neutral-400 dark:aria-invalid:border-red-500 dark:aria-invalid:focus-visible:ring-red-500"
       />
 
       {error ? (

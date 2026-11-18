@@ -33,6 +33,10 @@ class Settings(BaseSettings):
     # Comma separated list of allowed browser origins.
     cors_origins: str = Field(default="http://localhost:3000")
 
+    # --- Database ---
+    # Optional. When empty, database-backed features are disabled.
+    database_url: str = Field(default="", repr=False)
+
     # --- Supabase (used to verify incoming access tokens) ---
     supabase_url: str = Field(default="")
     supabase_anon_key: str = Field(default="")

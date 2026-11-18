@@ -38,10 +38,13 @@ uv run pytest
 
 ## Endpoints
 
-| Method | Path            | Access  | Description                       |
-| ------ | --------------- | ------- | --------------------------------- |
-| GET    | `/health`       | Public  | `{"status":"ok"}`                 |
-| GET    | `/api/v1/me`    | Private | Verified identity of the caller   |
+| Method | Path                         | Access  | Description                       |
+| ------ | ---------------------------- | ------- | --------------------------------- |
+| GET    | `/health`                    | Public  | `{"status":"ok"}`                 |
+| GET    | `/api/v1/me`                 | Private | Verified identity of the caller   |
+| GET    | `/api/v1/projects`           | Private | List the caller's projects        |
+| POST   | `/api/v1/projects`           | Private | Create a project for the caller   |
+| DELETE | `/api/v1/projects/{project_id}` | Private | Delete one of the caller's projects |
 
 Interactive docs: <http://localhost:8000/docs>
 
@@ -72,17 +75,50 @@ The user id is never read from a request parameter, query string or body. The
 only accepted input is the bearer token, and the response identity is derived
 solely from verified claims.
 
+### Projects
+
+`GET /api/v1/projects` returns the caller's projects. `POST` accepts:
+
+```json
+{ "title": "Ship the first milestone", "description": "Optional notes" }
+```
+
+Ownership is taken from the verified token. Extra body fields such as
+`user_id` or `owner_id` are rejected. `DELETE /api/v1/projects/{project_id}`
+returns `404` when the project does not exist or belongs to another user.
+
+| Code | Meaning |
+| ---- | ------- |
+| 200 | Projects listed |
+| 201 | Project created |
+| 204 | Project deleted |
+| 401 | Missing, invalid or expired token |
+| 404 | Project not found for this caller |
+| 422 | Invalid title, description or request body |
+| 503 | Database features are not configured or temporarily unavailable |
+
+The Projects and Tasks tables are created by the Alembic revision
+`alembic/versions/20261117_1600_4f6c1d2a9b70_story_1_3_projects_tasks.py`.
+Alembic is the approved schema-change path. The revision was applied to the
+APEX Supabase staging project on 2026-11-17; it has not been applied to
+production. See [`docs/database.md`](docs/database.md) for verification status.
+
 ## Layout
 
 ```
 src/apex_backend/
-├── main.py         # app factory, CORS, /health
+├── main.py         # app factory, CORS, /health, database error handlers
 ├── core/config.py  # settings from the environment
 ├── auth/
 │   ├── supabase.py      # token verification (remote + offline)
 │   └── dependencies.py  # get_current_identity / CurrentIdentity
-├── models/         # Pydantic schemas
-└── api/v1/         # versioned routes
+├── db/
+│   ├── models/          # ORM models registered for Alembic
+│   ├── session.py       # lazy engine/session lifecycle
+│   └── lifecycle.py     # startup/shutdown draining
+├── repositories/        # persistence boundaries (Projects)
+├── models/              # Pydantic schemas
+└── api/v1/              # versioned routes
 ```
 
 ## Adding a protected route
@@ -106,5 +142,8 @@ Never accept a `user_id` parameter for identity.
 
 ## Notes
 
-- The suite runs entirely offline. No test contacts a real Supabase project.
+- The suite runs entirely offline. No test contacts a real Supabase project or
+  PostgreSQL database.
+- Projects API tests use an in-memory repository. Alembic tests only render
+  offline SQL.
 - `httpx` is a dev dependency used by the test client.

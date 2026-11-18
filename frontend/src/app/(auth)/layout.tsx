@@ -1,6 +1,7 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 
+import { ThemeToggle } from "@/components/theme-toggle";
 import { isSupabaseConfigured } from "@/lib/supabase/config";
 
 /**
@@ -19,10 +20,13 @@ export default async function AuthLayout({ children }: { children: ReactNode }) 
         <Link href="/" className="text-sm font-medium hover:underline">
           &larr; APEX
         </Link>
+        <ThemeToggle />
       </div>
 
       {configured ? (
-        children
+        <div className="rounded-lg border border-neutral-200 p-6 shadow-sm dark:border-neutral-800">
+          {children}
+        </div>
       ) : (
         <div className="flex flex-col gap-4 rounded-lg border border-amber-300 bg-amber-50 p-6 dark:border-amber-700 dark:bg-amber-950">
           <h1 className="text-lg font-semibold">Supabase is not configured</h1>

@@ -101,7 +101,7 @@ export function AuthForm({ redirectTo }: AuthFormProps) {
           disabled={isBusy}
           aria-invalid={error ? true : undefined}
           aria-describedby={error ? "auth-error" : undefined}
-          className="rounded-md border border-neutral-300 bg-transparent px-3 py-2 text-sm outline-none focus:border-neutral-600 disabled:opacity-60 aria-invalid:border-red-500 aria-invalid:focus:border-red-600 dark:border-neutral-700 dark:aria-invalid:border-red-500 dark:aria-invalid:focus:border-red-600"
+          className="rounded-md border border-neutral-300 bg-transparent px-3 py-2 text-sm outline-none transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neutral-500 disabled:opacity-60 aria-invalid:border-red-500 aria-invalid:focus-visible:ring-red-500 dark:border-neutral-700 dark:focus-visible:ring-neutral-400 dark:aria-invalid:border-red-500 dark:aria-invalid:focus-visible:ring-red-500"
         />
       </div>
 
@@ -121,7 +121,7 @@ export function AuthForm({ redirectTo }: AuthFormProps) {
           placeholder={`At least ${MIN_PASSWORD_LENGTH} characters`}
           disabled={isBusy}
           aria-describedby={error ? "auth-error" : undefined}
-          className="rounded-md border border-neutral-300 bg-transparent px-3 py-2 text-sm outline-none focus:border-neutral-600 disabled:opacity-60 dark:border-neutral-700"
+          className="rounded-md border border-neutral-300 bg-transparent px-3 py-2 text-sm outline-none transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neutral-500 disabled:opacity-60 dark:border-neutral-700 dark:focus-visible:ring-neutral-400"
         />
       </div>
 
@@ -134,7 +134,7 @@ export function AuthForm({ redirectTo }: AuthFormProps) {
       <button
         type="submit"
         disabled={isDisabled}
-        className="rounded-md border border-black bg-black px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-neutral-700 disabled:cursor-not-allowed disabled:opacity-50 dark:border-white dark:bg-white dark:text-black dark:hover:bg-neutral-200"
+        className="rounded-md border border-black bg-black px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-neutral-700 disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neutral-500 dark:border-white dark:bg-white dark:text-black dark:hover:bg-neutral-200 dark:focus-visible:ring-neutral-400"
       >
         {isBusy ? "Signing in…" : "Sign in"}
       </button>

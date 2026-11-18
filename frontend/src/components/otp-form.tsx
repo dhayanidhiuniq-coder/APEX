@@ -58,7 +58,7 @@ export function OtpForm({ next }: OtpFormProps) {
             placeholder="000000"
             aria-invalid={verifyState.error ? true : undefined}
             aria-describedby={verifyState.error ? "otp-error" : "otp-hint"}
-            className="rounded-md border border-neutral-300 bg-transparent px-3 py-2 font-mono text-lg tracking-[0.4em] outline-none focus:border-neutral-600 disabled:opacity-60 aria-invalid:border-red-500 aria-invalid:focus:border-red-600 dark:border-neutral-700 dark:aria-invalid:border-red-500 dark:aria-invalid:focus:border-red-600"
+            className="rounded-md border border-neutral-300 bg-transparent px-3 py-2 font-mono text-lg tracking-[0.4em] outline-none transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neutral-500 disabled:opacity-60 aria-invalid:border-red-500 aria-invalid:focus-visible:ring-red-500 dark:border-neutral-700 dark:focus-visible:ring-neutral-400 dark:aria-invalid:border-red-500 dark:aria-invalid:focus-visible:ring-red-500"
           />
 
           {verifyState.error ? (
@@ -77,7 +77,7 @@ export function OtpForm({ next }: OtpFormProps) {
         <button
           type="submit"
           disabled={busy}
-          className="rounded-md border border-black bg-black px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-neutral-700 disabled:cursor-not-allowed disabled:opacity-50 dark:border-white dark:bg-white dark:text-black dark:hover:bg-neutral-200"
+          className="rounded-md border border-black bg-black px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-neutral-700 disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neutral-500 dark:border-white dark:bg-white dark:text-black dark:hover:bg-neutral-200 dark:focus-visible:ring-neutral-400"
         >
           {verifying ? "Verifying…" : "Verify email"}
         </button>
@@ -87,7 +87,7 @@ export function OtpForm({ next }: OtpFormProps) {
         <button
           type="submit"
           disabled={busy}
-          className="self-start rounded-md border border-neutral-300 px-3 py-1.5 text-sm font-medium transition-colors hover:bg-neutral-100 disabled:cursor-not-allowed disabled:opacity-60 dark:border-neutral-700 dark:hover:bg-neutral-800"
+          className="self-start rounded-md border border-neutral-300 px-3 py-1.5 text-sm font-medium transition-colors hover:bg-neutral-100 disabled:cursor-not-allowed disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neutral-500 dark:border-neutral-700 dark:hover:bg-neutral-800 dark:focus-visible:ring-neutral-400"
         >
           {resending ? "Sending…" : "Resend code"}
         </button>

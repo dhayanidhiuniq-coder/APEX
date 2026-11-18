@@ -41,7 +41,7 @@ From the repository root, `npm run dev` starts this and the backend together.
 | `/create-account` | Public  | Create an account (name, age, email, password)  |
 | `/verify`         | Public  | Email code entry; requires a pending registration |
 | `/signup`         | Public  | Redirects to `/create-account`                  |
-| `/dashboard`      | Private | Protected area; requires a confirmed session    |
+| `/dashboard`      | Private | Projects list, create/delete UI, and account details |
 
 ## Authentication design
 
@@ -97,6 +97,9 @@ src/
 │   ├── auth-errors.ts     # allowlisted error message normalisation
 │   ├── account-actions.ts # Server Actions: signup, verify, resend
 │   ├── account-state.ts   # action state types + initial values
+│   ├── backend-api.ts     # server-only authenticated fetch bridge
+│   ├── projects.ts        # Projects data access + response validation
+│   ├── project-state.ts   # Projects action state and field limits
 │   ├── email-confirmation.ts  # what counts as a confirmed address
 │   ├── otp-session.ts     # httpOnly cookie holding the pending address
 │   ├── request-origin.ts  # origin for Supabase's emailRedirectTo
@@ -113,6 +116,22 @@ and sends the access token to the FastAPI backend as a bearer token. The token
 never reaches the browser, and the backend verifies it independently before
 returning an identity.
 
+`src/lib/backend-api.ts` is the same server-only pattern for Projects. It reads
+the session, attaches the bearer token, and returns a small result union so the
+dashboard can show a friendly error instead of backend internals.
+
+### Projects UI
+
+`/dashboard` lists the signed-in user's projects and supports create and delete.
+Reads use the server-side bridge above. Mutations are Server Actions in
+`src/app/(protected)/dashboard/actions.ts`; each one calls
+`requireVerifiedUser()` again before forwarding the request. The browser never
+supplies an owner id.
+
+The page has responsive empty, loading, and error states. Native `<dialog>`
+handles the create form, and delete asks for confirmation before calling the
+action.
+
 ### Redirect safety
 
 `?next=` is attacker-controlled, so `safeNextPath()` rejects anything that is not
@@ -122,7 +141,8 @@ a single-slash-prefixed in-app path. Protocol-relative targets such as
 ## Verify
 
 ```bash
-npx tsc --noEmit      # typecheck
+npx tsc --noEmit --incremental false
+npx eslint "src/app/(protected)/dashboard" src/lib/backend-api.ts src/lib/project-state.ts src/lib/projects.ts
 npx next build        # production build
 ```
 
@@ -132,4 +152,7 @@ npx next build        # production build
   restart the dev server; if a change appears not to apply, delete `.next`.
 - Only public Supabase values may be used in a `NEXT_PUBLIC_` variable. The
   service-role key and JWT secret must never reach the browser.
+- The Projects dashboard needs `DATABASE_URL` on the backend and the Story 1.3
+  Alembic revision applied. Until then it shows a friendly unavailable message;
+  RLS isolation and production verification remain outstanding.
 - This UI is functional, not final.

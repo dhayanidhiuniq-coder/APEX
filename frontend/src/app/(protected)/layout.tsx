@@ -1,6 +1,7 @@
 import Link from "next/link";
 
 import { SignOutButton } from "@/components/sign-out-button";
+import { ThemeToggle } from "@/components/theme-toggle";
 import { requireVerifiedUser } from "@/lib/auth";
 
 /**
@@ -31,6 +32,7 @@ export default async function ProtectedLayout({ children }: { children: React.Re
           <span className="hidden text-sm text-neutral-600 sm:inline dark:text-neutral-300">
             {user.email}
           </span>
+          <ThemeToggle />
           <SignOutButton />
         </div>
       </header>

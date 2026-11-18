@@ -7,6 +7,7 @@ either stubbed or pointed at a local fake key.
 from __future__ import annotations
 
 import os
+from collections.abc import Iterator
 
 import pytest
 
@@ -32,6 +33,17 @@ def _clear_settings_cache() -> None:
 def client() -> TestClient:
     """Test client for the real application instance."""
     return TestClient(create_app())
+
+
+@pytest.fixture
+def lifespan_client(
+    monkeypatch: pytest.MonkeyPatch,
+) -> Iterator[TestClient]:
+    """Test client that runs the application lifespan without a database."""
+    monkeypatch.setenv("DATABASE_URL", "")
+    get_settings.cache_clear()
+    with TestClient(create_app()) as test_client:
+        yield test_client
 
 
 @pytest.fixture
